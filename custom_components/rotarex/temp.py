@@ -31,17 +31,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         for tank_data in coordinator.data:
             # Ensure the tank has a Guid before creating sensors
             if tank_data.get("Guid"):
+                # entities.append(TankNameSensor(coordinator, tank_data))
                 entities.append(TankLevelSensor(coordinator, tank_data))
                 entities.append(TankBatterySensor(coordinator, tank_data))
+                # entities.append(TankLastSyncSensor(coordinator, tank_data))
                 entities.append(TankLastSyncDateSensor(coordinator, tank_data))
-
+    
     async_add_entities(entities)
 
 
 class BaseTankSensor(CoordinatorEntity, SensorEntity):
     """Base class for Rotarex tank sensors."""
-
-    _attr_has_entity_name = True
 
     def __init__(self, coordinator, tank_data):
         """Initialize the sensor."""
@@ -61,20 +61,6 @@ class BaseTankSensor(CoordinatorEntity, SensorEntity):
     def _update_internal_state(self, tank_data):
         """Update sensor's internal state from tank_data."""
         raise NotImplementedError
-
-    def _get_latest_sync(self):
-        """Get the latest sync data for the tank."""
-        tank_data = next(
-            (
-                tank
-                for tank in self.coordinator.data
-                if tank.get("Guid") == self._tank_id
-            ),
-            None,
-        )
-        if tank_data and tank_data.get("SynchDatas"):
-            return max(tank_data["SynchDatas"], key=lambda x: x["SynchDate"])
-        return None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -96,6 +82,16 @@ class BaseTankSensor(CoordinatorEntity, SensorEntity):
             model="DIMES SRG",
         )
 
+class TankNameSensor(BaseTankSensor):
+    """Representation of a Tank Name Sensor."""
+
+    _attr_icon = "mdi:label"
+
+    def _update_internal_state(self, tank_data):
+        """Update sensor's internal state from tank_data."""
+        self._attr_name = f"{get_tank_name(tank_data)} Name"
+        self._attr_unique_id = f"rotarex_{self._tank_id}_name"
+        self._attr_native_value = get_tank_name(tank_data)
 
 class TankLevelSensor(BaseTankSensor):
     """Representation of a Tank Level Sensor."""
@@ -103,25 +99,23 @@ class TankLevelSensor(BaseTankSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_device_class = SensorDeviceClass.VOLUME_STORAGE
-    _attr_translation_key = "level"
-
-    @property
-    def extra_state_attributes(self):
-        """Return the state attributes."""
-        latest_sync = self._get_latest_sync()
-        if not latest_sync:
-            return None
-        return {
-            "last_synch": latest_sync.get("SynchDate"),
-            "temperature": latest_sync.get("Temperature"),
-        }
 
     def _update_internal_state(self, tank_data):
         """Update sensor's internal state from tank_data."""
+        self._attr_name = f"{get_tank_name(tank_data)} Level"
         self._attr_unique_id = f"rotarex_{self._tank_id}_level"
-        latest_sync = self._get_latest_sync()
+
+        latest_sync = (
+            max(tank_data["SynchDatas"], key=lambda x: x["SynchDate"])
+            if tank_data.get("SynchDatas")
+            else None
+        )
         if latest_sync:
             self._attr_native_value = latest_sync.get("Level")
+            self._attr_extra_state_attributes = {
+                "last_synch": latest_sync.get("SynchDate"),
+                "temperature": latest_sync.get("Temperature"),
+            }
         else:
             self._attr_native_value = None
 
@@ -132,38 +126,61 @@ class TankBatterySensor(BaseTankSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_translation_key = "battery"
-
-    @property
-    def extra_state_attributes(self):
-        """Return the state attributes."""
-        latest_sync = self._get_latest_sync()
-        if not latest_sync:
-            return None
-        return {
-            "last_synch": latest_sync.get("SynchDate"),
-        }
 
     def _update_internal_state(self, tank_data):
         """Update sensor's internal state from tank_data."""
+        self._attr_name = f"{get_tank_name(tank_data)} Battery"
         self._attr_unique_id = f"rotarex_{self._tank_id}_battery"
-        latest_sync = self._get_latest_sync()
+
+        latest_sync = (
+            max(tank_data["SynchDatas"], key=lambda x: x["SynchDate"])
+            if tank_data.get("SynchDatas")
+            else None
+        )
         if latest_sync:
             self._attr_native_value = latest_sync.get("Battery")
+            self._attr_extra_state_attributes = {
+                "last_synch": latest_sync.get("SynchDate")
+            }
         else:
             self._attr_native_value = None
 
+
+class TankLastSyncSensor(BaseTankSensor):
+    """Representation of a Tank Last Sync Timestamp Sensor."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def _update_internal_state(self, tank_data):
+        """Update sensor's internal state from tank_data."""
+        self._attr_name = f"{get_tank_name(tank_data)} Last Sync"
+        self._attr_unique_id = f"rotarex_{self._tank_id}_last_sync"
+
+        latest_sync = (
+            max(tank_data["SynchDatas"], key=lambda x: x["SynchDate"])
+            if tank_data.get("SynchDatas")
+            else None
+        )
+        if latest_sync and latest_sync.get("SynchDate"):
+            self._attr_native_value = dt_util.parse_datetime(latest_sync["SynchDate"])
+        else:
+            self._attr_native_value = None
 
 class TankLastSyncDateSensor(BaseTankSensor):
     """Representation of a Tank Last Sync Date Sensor."""
 
     _attr_icon = "mdi:calendar"
-    _attr_translation_key = "last_sync"
 
     def _update_internal_state(self, tank_data):
         """Update sensor's internal state from tank_data."""
+        self._attr_name = f"{get_tank_name(tank_data)} Last Sync Date"
         self._attr_unique_id = f"rotarex_{self._tank_id}_last_sync_date"
-        latest_sync = self._get_latest_sync()
+
+        latest_sync = (
+            max(tank_data["SynchDatas"], key=lambda x: x["SynchDate"])
+            if tank_data.get("SynchDatas")
+            else None
+        )
         if latest_sync and latest_sync.get("SynchDate"):
             utc_dt = dt_util.parse_datetime(latest_sync["SynchDate"])
             self._attr_native_value = utc_dt.strftime("%d-%m-%Y %H:%M:%S") + " UTC +1"
